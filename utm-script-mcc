@@ -1,0 +1,108 @@
+function main() {
+  var ids = getAllCustomerIds();
+  Logger.log(ids);
+
+  var batchSize = 50;
+  var convertedIds = convertIdFormat(ids);
+  var batchedIds = batchIds(convertedIds, batchSize);
+
+  batchedIds.forEach((batch) => {
+    const accountSelector = AdsManagerApp.accounts().withIds(batch);
+    // Perform operations with accountSelector
+    Logger.log("Processing batch: " + batch);
+    accountSelector.executeInParallel("processAccount", "allFinished");
+  });
+}
+// Convert IDs from "123-456-7890" to "1234567890"
+function convertIdFormat(ids) {
+  return ids.map((id) => id.replace(/-/g, ""));
+}
+
+function batchIds(ids, batchSize) {
+  var batchedIds = [];
+  for (var i = 0; i < ids.length; i += batchSize) {
+    batchedIds.push(ids.slice(i, i + batchSize));
+  }
+  return batchedIds;
+}
+
+function getAllCustomerIds() {
+  var customerIds = [];
+  var accountIterator = AdsManagerApp.accounts().get();
+
+  while (accountIterator.hasNext()) {
+    var account = accountIterator.next();
+    customerIds.push(account.getCustomerId());
+  }
+
+  return customerIds;
+}
+
+function processAccount() {
+  var account = AdsApp.currentAccount();
+  Logger.log("Processing account: " + account.getCustomerId());
+
+  // Process each campaign type with error handling
+  tryHandleCampaigns(AdsApp.campaigns(), "Standard & Others");
+  tryHandleCampaigns(AdsApp.shoppingCampaigns(), "Shopping");
+  tryHandleCampaigns(AdsApp.performanceMaxCampaigns(), "Performance Max");
+  // tryHandleCampaigns(AdsApp.videoCampaigns(), "Video");
+
+  // Return a result that you can use later in allFinished (optional)
+  return account.getCustomerId();
+}
+
+function tryHandleCampaigns(campaignIteratorFunction, campaignType) {
+  try {
+    handleCampaigns(campaignIteratorFunction, campaignType);
+  } catch (e) {
+    Logger.log("Error processing " + campaignType + " campaigns: " + e.message);
+  }
+}
+
+function handleCampaigns(campaignIteratorFunction, campaignType) {
+  var campaignIterator = campaignIteratorFunction
+    .withCondition("Status != REMOVED")
+    .get();
+  while (campaignIterator.hasNext()) {
+    var campaign = campaignIterator.next();
+    try {
+      var trackingTemplate =
+        "{lpurl}?utm_source=google&utm_medium=cpc&utm_campaign={_campaign}&utm_id=" +
+        campaign.getId();
+      campaign.urls().setTrackingTemplate(trackingTemplate);
+      // Set custom parameters or perform other universal actions here
+      campaign
+        .urls()
+        .setCustomParameters({
+          campaign: encodeURIComponent(campaign.getName()),
+        });
+    } catch (e) {
+      Logger.log(
+        "Error processing campaign " +
+          campaign.getId() +
+          " in " +
+          campaignType +
+          ": " +
+          e.message
+      );
+    }
+  }
+}
+
+// This function is optional but allows you to handle any results after all accounts are processed
+function allFinished(results) {
+  for (var i = 0; i < results.length; i++) {
+    var result = results[i];
+    if (result.getStatus() === "OK") {
+      Logger.log("Successfully processed account: " + result.getCustomerId());
+    } else {
+      Logger.log(
+        "Failed to process account: " +
+          result.getCustomerId() +
+          " with error: " +
+          result.getError()
+      );
+    }
+  }
+}
