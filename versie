@@ -1,0 +1,81 @@
+function main() {
+  const accountSelector = AdsManagerApp.accounts().withLimit(240); // Pas de limiet aan indien nodig
+  
+  // Definieer batchgrootte (pas aan indien nodig)
+  const batchSize = 10;
+  
+  const accountIterator = accountSelector.get();
+  processAccountsInBatches(accountIterator, batchSize);
+}
+
+function processAccountsInBatches(accountIterator, batchSize) {
+  let currentBatch = [];
+  while (accountIterator.hasNext()) {
+    const account = accountIterator.next();
+    currentBatch.push(account);
+    if (currentBatch.length === batchSize) {
+      processAccountBatch(currentBatch);
+      currentBatch = [];
+    }
+  }
+
+  // Verwerk de laatste batch indien er minder dan batchSize accounts zijn
+  if (currentBatch.length > 0) {
+    processAccountBatch(currentBatch);
+  }
+}
+
+function processAccountBatch(accounts) {
+  const futures = [];
+  for (const account of accounts) {
+    futures.push(processAccount(account));
+  }
+
+  // Wacht tot alle accounts in de batch zijn verwerkt
+  const results = Promise.all(futures).then(results => {
+    handleBatchResults(results);
+  });
+}
+
+function processAccount(account) {
+  Logger.log("Processing account: " + account.getCustomerId());
+
+  try {
+    // Verwerk elk campagnetype met foutafhandeling
+    handleCampaigns(AdsApp.campaigns(), "Standard & Others");
+    handleCampaigns(AdsApp.shoppingCampaigns(), "Shopping");
+    handleCampaigns(AdsApp.performanceMaxCampaigns(), "Performance Max");
+    
+    // Retourneer het accountobject voor het bijhouden (optioneel)
+    return account;
+  } catch (e) {
+    Logger.log("Error processing account " + account.getCustomerId() + ": " + e.message);
+    return null; // Geef aan dat er een fout is opgetreden voor dit account
+  }
+}
+
+function handleBatchResults(results) {
+  // Verwerk resultaten van de batch
+  results.forEach(result => {
+    if (result !== null) {
+      const customerId = result.getCustomerId();
+      Logger.log("Successfully processed account: " + customerId);
+    } else {
+      Logger.log("Failed to process an account.");
+    }
+  });
+}
+
+function handleCampaigns(campaignIteratorFunction, campaignType) {
+  const campaignIterator = campaignIteratorFunction.withCondition('Status != REMOVED').get();
+  while (campaignIterator.hasNext()) {
+    const campaign = campaignIterator.next();
+    try {
+      const trackingTemplate = "{lpurl}?utm_source=google&utm_medium=cpc&utm_campaign={_campaign}&utm_id=" + campaign.getId();
+      campaign.urls().setTrackingTemplate(trackingTemplate);
+      campaign.urls().setCustomParameters({ campaign: encodeURIComponent(campaign.getName()) });
+    } catch (e) {
+      Logger.log("Error processing campaign " + campaign.getId() + " in " + campaignType + ": " + e.message);
+    }
+  }
+}
