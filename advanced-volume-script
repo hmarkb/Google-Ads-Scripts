@@ -1,0 +1,114 @@
+const SHEET_URL = 'https://docs.google.com/spreadsheets/d/1CSOPjY5WsFxEkEMyt1pb9yedoIck6MoUuSzWVLOjyNs/';
+const NUM_DAYS = 1; // Data van slechts 1 dag (de dag waarop het script draait)
+const MAX_CPA = 50.00;
+const MAX_INCREASE = 0.10;
+const MAX_DECREASE = 0.10;
+const MIN_CHANGE = 0.01;
+const MIN_BUDGET = 10.00;
+const MAX_BUDGET = 1000.00;
+const EMAIL_ADDRESS = "mark.hanzel@bookingboosters.nl";
+
+function main() {
+  Logger.log('Start script voor budget optimalisatie en rapportage...');
+
+  const dateRange = getDateRange(NUM_DAYS);
+  let start = new Date();
+  let emailContent = "Campagne rapport voor account: " + AdsApp.currentAccount().getName() + "\n\n";
+  emailContent += "Datum, Campaign Naam, Campaign ID, Impressies, Totale Kosten, CPA, Conversies, CPC, CTR, Klikken, Oud Budget, Nieuw Budget\n"; // Tabel headers
+  let budgetChanges = [];
+
+  try {
+    var campaignsReport = AdsApp.report(`
+      SELECT 
+          campaign.id, campaign.name, campaign.status, campaign.bidding_strategy_type,
+          metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions,
+          metrics.average_cpc, metrics.ctr, campaign.campaign_budget,
+          segments.date
+      FROM campaign 
+      WHERE campaign.status = 'ENABLED' 
+          AND segments.date BETWEEN ${dateRange}
+    `).rows();
+  } catch (error) {
+    Logger.log('Fout bij het ophalen van campagne rapport: ' + error);
+    return;
+  }
+
+  while (campaignsReport.hasNext()) {
+    let campaign = campaignsReport.next();
+    
+    if (campaign['campaign.bidding_strategy_type'] === "MANUAL_CPC") {
+      let cost = campaign['metrics.cost_micros'] / 1000000;
+      let clicks = parseInt(campaign['metrics.clicks']);
+      let impressions = parseInt(campaign['metrics.impressions']);
+      let conversions = parseFloat(campaign['metrics.conversions']);
+      let cpc = campaign['metrics.average_cpc'] / 1000000;
+      let ctr = campaign['metrics.ctr'];
+      let cpa = conversions > 0 ? cost / conversions : Infinity;
+      
+      let campaignBudgetId = extractNumericId(campaign['campaign.campaign_budget']);
+      let currentBudget = getCampaignBudget(campaignBudgetId);
+      
+      let newBudget = currentBudget;
+      if (conversions > 0 && cpa < MAX_CPA) {
+        newBudget = Math.min(currentBudget * (1 + MAX_INCREASE), MAX_BUDGET);
+      } else if (cpa > MAX_CPA && cost > 0) {
+        newBudget = Math.max(currentBudget * (1 - MAX_DECREASE), MIN_BUDGET);
+      }
+      
+      let budgetChange = newBudget - currentBudget;
+
+      if (Math.abs(budgetChange) / currentBudget >= MIN_CHANGE) {
+        budgetChanges.push({
+          campaignId: campaign['campaign.id'],
+          newBudget: newBudget,
+          currentBudget: currentBudget
+        });
+
+        emailContent += `${getFormattedDate(campaign['segments.date'])}, ${campaign['campaign.name']}, ${campaign['campaign.id']}, ${impressions}, ${cost.toFixed(2)}, ${isFinite(cpa) ? cpa.toFixed(2) : "N/A"}, ${conversions}, ${cpc.toFixed(2)}, ${(ctr * 100).toFixed(2)}%, ${clicks}, ${currentBudget.toFixed(2)}, ${newBudget.toFixed(2)}\n`;
+      }
+    }
+  }
+
+  if (budgetChanges.length > 0) {
+    for (let change of budgetChanges) {
+      AdsApp.campaigns().withIds([change.campaignId]).get().next().getBudget().setAmount(change.newBudget);
+    }
+
+    MailApp.sendEmail({
+      to: EMAIL_ADDRESS,
+      subject: "Campagne rapport (" + AdsApp.currentAccount().getName() + ")",
+      body: emailContent
+    });
+  } else {
+    Logger.log("Geen wijzigingen in budgetten doorgevoerd.");
+  }
+
+  let end = new Date();
+  let dur = (end - start) / 1000;
+  Logger.log(`Script voltooid in ${dur} seconden`);
+}
+
+function getCampaignBudget(campaignBudgetId) {
+  var budgetIterator = AdsApp.budgets().withIds([campaignBudgetId]).get();
+  if (budgetIterator.hasNext()) {
+    var budget = budgetIterator.next();
+    return budget.getAmount();
+  }
+  return null;
+}
+
+function extractNumericId(campaignBudgetId) {
+  return parseInt(campaignBudgetId.split('/').pop());
+}
+
+function getDateRange(numDays) {
+  const endDate = new Date();
+  const startDate = new Date();
+  startDate.setDate(endDate.getDate() - numDays);
+  const format = date => Utilities.formatDate(date, AdsApp.currentAccount().getTimeZone(), 'yyyyMMdd');
+  return `${format(startDate)} AND ${format(endDate)}`;
+}
+
+function getFormattedDate(dateString) {
+  return Utilities.formatDate(new Date(dateString), AdsApp.currentAccount().getTimeZone(), 'yyyy-MM-dd');
+}
