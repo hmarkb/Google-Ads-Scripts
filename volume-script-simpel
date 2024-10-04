@@ -1,0 +1,74 @@
+function main() {
+  // Define the label that campaigns must have
+  var requiredLabel = "auto-adjust budget";
+  // Define the maximum percentage change allowed for the budget (e.g., 10% increase or decrease)
+  var maxPercentageChange = 0.1;
+  // Define the minimum percentage change required to update the budget (e.g., 5%)
+  var minPercentageChange = 0.05;
+  // Define the target cost per conversion
+  var targetCostPerConversion = 50.0; // Set your MAX target cost per conversion here
+  // don't edit anything below this line ----------------------
+  // Get the current date
+  var currentDate = new Date();
+  var formattedDate = Utilities.formatDate(currentDate, AdsApp.currentAccount().getTimeZone(), "yyyy-MM-dd");
+  // Select campaigns that have the required label and are active
+  var campaignSelector = AdsApp.campaigns()
+    .withCondition("LabelNames CONTAINS '" + requiredLabel + "'")
+    .withCondition("Status = ENABLED") // Only active campaigns
+    .forDateRange("LAST_7_DAYS"); // Last 7 days
+  var campaigns = campaignSelector.get();
+  Logger.log("Starting budget adjustment script for campaigns with the required label...");
+  while (campaigns.hasNext()) {
+    var campaign = campaigns.next();
+    var campaignName = campaign.getName();
+    Logger.log("Processing campaign: " + campaignName);
+    // Retrieve the last 7 days cost for the campaign
+    var stats = campaign.getStatsFor("LAST_7_DAYS");
+    var totalCostLast7Days = stats.getCost();
+    var impressions = stats.getImpressions();
+    var clicks = stats.getClicks();
+    var ctr = stats.getCtr();
+    var cpc = stats.getAverageCpc();
+    var conversions = stats.getConversions();
+    var costPerConversion = conversions ? totalCostLast7Days / conversions : 0;
+    // Calculate the new daily budget based on the last 7 days cost
+    var newDailyBudget = (totalCostLast7Days / 7) * 1.25;
+    var currentBudget = campaign.getBudget().getAmount();
+    // Round the new daily budget to 2 decimal places
+    newDailyBudget = parseFloat(newDailyBudget.toFixed(2));
+    // Calculate the allowed budget change
+    var maxBudgetIncrease = currentBudget * (1 + maxPercentageChange);
+    var minBudgetDecrease = currentBudget * (1 - maxPercentageChange);
+    // Calculate the percentage change
+    var percentageChange = (newDailyBudget - currentBudget) / currentBudget;
+    // Determine if the budget can be increased or decreased
+    var canIncreaseBudget = costPerConversion > 0 && costPerConversion <= targetCostPerConversion;
+    var canDecreaseBudget = true; // Always allow decreasing budget
+    // Skip campaigns where no significant budget change is needed
+    if (Math.abs(percentageChange) < minPercentageChange) {
+      Logger.log("No significant budget change required for campaign: " + campaignName + " (Change: " + (percentageChange * 100).toFixed(2) + "%).");
+      continue;
+    }
+    if (percentageChange > 0 && !canIncreaseBudget) {
+      Logger.log("Budget increase not allowed for campaign: " + campaignName + " due to high cost per conversion (" + costPerConversion.toFixed(2) + ").");
+      continue;
+    }
+    // If the calculated change is greater than the max allowed change, limit it to the max allowed change
+    if (percentageChange > maxPercentageChange) {
+      newDailyBudget = maxBudgetIncrease;
+      percentageChange = maxPercentageChange;
+    } else if (percentageChange < -maxPercentageChange) {
+      newDailyBudget = minBudgetDecrease;
+      percentageChange = -maxPercentageChange;
+    }
+    // Update the campaign budget
+    try {
+      Logger.log("Updating budget for campaign: " + campaignName + ". New Daily Budget: " + newDailyBudget + " (Change: " + (percentageChange * 100).toFixed(2) + "%)");
+      campaign.getBudget().setAmount(newDailyBudget);
+      Logger.log("Budget updated successfully for campaign: " + campaignName);
+    } catch (e) {
+      Logger.log("Error updating budget for campaign: " + campaignName + ". Error: " + e.message);
+    }
+  }
+  Logger.log("Budget adjustment script completed.");
+}
