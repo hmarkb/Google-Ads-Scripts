@@ -1,0 +1,58 @@
+function main() {
+
+  // ********** Vul hier je gegevens in **********
+
+  var keywordString = 'example1 example2 example3'; // Vul de keywords gescheiden door spaties
+  var keywords = keywordString.split(' ').map(function(keyword) {
+    return keyword.trim();
+  });
+
+  var negativeKeywordListName = 'P/max uitsluitingslijst'; // PAS DIT AAN naar de naam van de uitsluitingslijst
+  var matchType = 'EXACT'; // PAS DIT AAN naar 'EXACT' of 'BROAD'
+  var campaignNameInput = '[BB] Performance Max Hotels'; // PAS DIT AAN naar de exacte P/Max campagnenaam
+  var emailAddress = 'mark.hanzel@bookingboosters.nl'; // PAS DIT AAN naar je eigen e-mailadres
+
+  // ********** Vanaf hier niks meer aanpassen **********
+
+  let start = new Date();
+  var accountId = AdsApp.currentAccount().getCustomerId();
+  Logger.log('Account ID: ' + accountId);
+
+  var csvContent = "Action,Ads Account ID,Campaign Name,Negative Keyword List Name,Keywords,Match Type\n";
+
+  csvContent += 'Create & Apply the existing list,' + 
+                accountId + ',' + 
+                campaignNameInput + ',' + 
+                negativeKeywordListName + ',' + 
+                keywords[0] + ',' + 
+                matchType + '\n';
+
+  for (var i = 1; i < keywords.length; i++) {
+    csvContent += ',,,,' + keywords[i] + ',' + matchType + '\n';
+  }
+
+  Logger.log('CSV inhoud gegenereerd.');
+
+  try {
+    MailApp.sendEmail({
+      to: emailAddress,
+      subject: 'Negatieve Zoekwoordenlijst Request',
+      body: 'Hierbij het CSV-bestand met de negatieve zoekwoordenlijst voor de campagne: ' + campaignNameInput,
+      attachments: [
+        {
+          fileName: 'Negative_Keyword_List_Request_' + accountId + '.csv',
+          content: csvContent,
+          mimeType: 'text/csv'
+        }
+      ]
+    });
+
+    Logger.log('E-mail succesvol verzonden naar: ' + emailAddress);
+  } catch (error) {
+    Logger.log('Fout bij het versturen van de e-mail: ' + error.message);
+  }
+
+  let end = new Date();
+  let duration = (end - start) / 1000;
+  Logger.log('Script voltooid in ' + duration + ' seconden.');
+}
