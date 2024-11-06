@@ -1,0 +1,242 @@
+/**
+ * Google Ads Script - Negative Keyword Suggestions (Aangepaste versie met zoektermnamen)
+ * Dit script haalt zoekwoorden en zoektermgegevens op, gescheiden door minimale klikken en kosten.
+ * Volg de onderstaande stappen om het script te configureren:
+ * 1. Maak een nieuwe Google Spreadsheet aan.
+ * 2. Voeg de volledige URL van de spreadsheet toe aan de variabele SPREADSHEET_URL hieronder.
+ * 3. Stel het gewenste datumbereik in via de variabele PERIOD.
+ * 4. Stel drempelwaarden in voor MIN_CLICKS en MIN_COST.
+ * 5. Voeg de naam van uw Google Ads-account toe aan ACCOUNT_NAME.
+ * 6. Voeg uw e-mailadres toe aan EMAIL_ADDRESS.
+ * 7. Autoriseer en voer het script uit.
+ * 8. Plan het script om wekelijks te draaien (bijvoorbeeld op maandagochtend om 6 uur).
+ */
+
+// START VAN SCRIPTCONFIGURATIE
+
+var SPREADSHEET_URL = "https://docs.google.com/spreadsheets/d/1UZd8Wh37kItRl0VyRtAhPp6b6kRV-OY15XDY8rz5ToM/"; // Voeg hier de URL van de Google Spreadsheet in.
+
+var PERIOD = "LAST_12_MONTHS"; // Beschikbare opties: "LAST_7_DAYS", "LAST_30_DAYS", "LAST_60_DAYS", "LAST_90_DAYS", "LAST_12_MONTHS", "THIS_YEAR".
+
+// DREMPELS
+
+var MIN_CLICKS = 80; // Stel het minimum aantal klikken in.
+var MIN_COST = 75; // Stel de minimumkosten in.
+
+// E-MAILCONFIGURATIE
+
+var ACCOUNT_NAME = "De Witte Berg"; // Voeg hier de naam van uw account in.
+var CURRENCY = "EUR"; // Stel de valuta in, bijvoorbeeld "USD" of "EUR".
+var SEND_EMAIL = true;
+var EMAIL_ADDRESS = "mark.hanzel@bookingboosters.nl"; // Voeg hier uw e-mailadres in.
+
+// EINDE VAN SCRIPTCONFIGURATIE
+
+// HULPFUNCTIES
+
+function toMoney(m) {
+  return m * 1000000;
+}
+
+function convertMoney(m) {
+  return m / 1000000;
+}
+
+function getStartDate(period) {
+  var startDate;
+  var today = new Date();
+  switch (period) {
+    case "THIS_YEAR":
+      startDate = today.getFullYear() + "-01-01";
+      break;
+    case "LAST_7_DAYS":
+      startDate = dateToISOString(new Date(Date.now() - 7 * 864e5));
+      break;
+    case "LAST_30_DAYS":
+      startDate = dateToISOString(new Date(Date.now() - 30 * 864e5));
+      break;
+    case "LAST_60_DAYS":
+      startDate = dateToISOString(new Date(Date.now() - 60 * 864e5));
+      break;
+    case "LAST_90_DAYS":
+      startDate = dateToISOString(new Date(Date.now() - 90 * 864e5));
+      break;
+    case "LAST_12_MONTHS":
+      startDate = dateToISOString(new Date(Date.now() - 365 * 864e5));
+      break;
+    default:
+      startDate = "2021-01-01";
+  }
+  return startDate;
+}
+
+function getEndDate(period) {
+  var endDate;
+  var yesterday = new Date(Date.now() - 864e5);
+  switch (period) {
+    case "LAST_YEAR":
+      endDate = "lastDayLastYear";
+      break;
+    case "LAST_MONTH":
+      endDate = "lastDayLastMonth";
+      break;
+    default:
+      endDate = dateToISOString(yesterday);
+  }
+  return endDate;
+}
+
+function dateToISOString(date) {
+  var year = date.getUTCFullYear();
+  var month = date.getUTCMonth() + 1;
+  if (month < 10) {
+    month = "0" + month;
+  }
+  var day = date.getUTCDate();
+  if (day < 10) {
+    day = "0" + day;
+  }
+  var ISOString = year + "-" + month + "-" + day;
+  return ISOString;
+}
+
+// HOOFDFUNCTIE
+
+function main() {
+  var results = [];
+  var date = new Date();
+
+  // Query 1: Haal de zoektermen op uit search_term_view
+  var query1 = 
+    "SELECT search_term_view.search_term, campaign.name, ad_group.name, metrics.impressions, metrics.clicks, metrics.average_cpc, metrics.cost_micros, metrics.conversions" +
+    " FROM search_term_view WHERE metrics.clicks > " + MIN_CLICKS +
+    " AND metrics.cost_micros > " + toMoney(MIN_COST) +
+    " AND campaign.status = ENABLED AND ad_group.status = ENABLED" +
+    " AND segments.date BETWEEN '" + getStartDate(PERIOD) + "' AND '" + getEndDate(PERIOD) + "' ORDER BY metrics.clicks DESC LIMIT 100";
+
+  Logger.log("Executing query for search terms: " + query1);
+  var result1 = AdsApp.search(query1);
+  var searchTermsData = {};
+
+  while (result1.hasNext()) {
+    var row = result1.next();
+    var searchTerm = row.searchTermView.searchTerm;
+    var campaignName = row.campaign.name;
+    var adGroupName = row.adGroup.name;
+    var impressions = row.metrics.impressions;
+    var clicks = row.metrics.clicks;
+    var avgCPC = convertMoney(row.metrics.averageCpc).toFixed(2);
+    var cost = convertMoney(row.metrics.costMicros).toFixed(2);
+    var conversions = parseFloat(row.metrics.conversions.toFixed(2));
+
+    searchTermsData[searchTerm] = {
+      campaignName: campaignName,
+      adGroupName: adGroupName,
+      impressions: impressions,
+      clicks: clicks,
+      avgCPC: avgCPC,
+      cost: cost,
+      conversions: conversions
+    };
+  }
+
+  // Query 2: Haal de keyword gegevens op uit keyword_view
+  var query2 = 
+    "SELECT keyword_view.resource_name, campaign.name, ad_group.name, metrics.all_conversions_value_by_conversion_date, metrics.clicks" +
+    " FROM keyword_view WHERE metrics.clicks > " + MIN_CLICKS +
+    " AND metrics.cost_micros > " + toMoney(MIN_COST) +
+    " AND campaign.status = ENABLED AND ad_group.status = ENABLED" +
+    " AND segments.date BETWEEN '" + getStartDate(PERIOD) + "' AND '" + getEndDate(PERIOD) + "' ORDER BY metrics.clicks DESC LIMIT 100";
+
+  Logger.log("Executing query for keywords: " + query2);
+  var result2 = AdsApp.search(query2);
+
+  while (result2.hasNext()) {
+    var row = result2.next();
+    var resourceName = row.keywordView.resourceName;
+    var allConversionsValue = row.metrics.allConversionsValueByConversionDate ? row.metrics.allConversionsValueByConversionDate.toFixed(2) : 0;
+
+    if (searchTermsData[resourceName]) {
+      // Combineer de gegevens uit beide queries
+      var data = searchTermsData[resourceName];
+      results.push([date, ACCOUNT_NAME, data.campaignName, data.adGroupName, data.impressions, data.clicks, data.avgCPC, data.cost, data.conversions, allConversionsValue, resourceName]);
+    }
+  }
+
+  reportResults({ output: results });
+}
+
+function reportResults(result) {
+  var outputSheet = prepareOutputSheets();
+  var nrOfResultsReported = 0;
+  var output = result.output;
+
+  if (output.length > 0) {
+    addOutputToSheet(output, outputSheet);
+    nrOfResultsReported += output.length;
+  }
+
+  if (SEND_EMAIL && nrOfResultsReported > 0 && EMAIL_ADDRESS) {
+    var emailSubject = "[Gads Script] Negative Keyword Suggestions";
+    var emailBody = "Number of negative keyword suggestions added in total: " + nrOfResultsReported + "\n\n" +
+                    "You can find all negative keyword suggestions here: " + SPREADSHEET_URL;
+    var emailQuotaRemaining = MailApp.getRemainingDailyQuota();
+    if (emailQuotaRemaining > 0) {
+      MailApp.sendEmail(EMAIL_ADDRESS, emailSubject, emailBody);
+    } else {
+      Logger.log("No email sent: quota exceeded.");
+    }
+  }
+}
+
+function prepareOutputSheets() {
+  if (!SPREADSHEET_URL) {
+    Logger.log("Spreadsheet URL is not set.");
+    return;
+  }
+  var spreadsheet = SpreadsheetApp.openByUrl(SPREADSHEET_URL);
+  if (!spreadsheet) {
+    Logger.log("Cannot open new reporting spreadsheet");
+    return;
+  }
+  var sheet = spreadsheet.getActiveSheet();
+  if (!sheet) {
+    Logger.log("Cannot open new reporting sheet");
+    return;
+  }
+
+  sheet.setColumnWidth(1, 80);
+  sheet.setColumnWidth(2, 200);
+  sheet.setColumnWidth(3, 300);
+  sheet.setColumnWidth(4, 200);
+  sheet.setColumnWidth(5, 100);
+  sheet.setColumnWidth(6, 60);
+  sheet.setColumnWidth(7, 60);
+  sheet.setColumnWidth(8, 60);  
+  sheet.setColumnWidth(9, 80);
+  sheet.setColumnWidth(10, 120); // All Conv. Value column
+  sheet.setColumnWidth(11, 200); // Search Term column
+  
+  addHeaderToOutputSheet(sheet);
+  return sheet;
+}
+
+function addHeaderToOutputSheet(sheet) {
+  var headers = [
+    "Date", "Account Name", "Campaign Name", "Ad Group Name", "Impressions", 
+    "Clicks", "Avg CPC", "Cost", "Conversions", "All Conv. Value", "Search Term"
+  ];
+  var range = sheet.getRange(1, 1, 1, headers.length);
+  range.setValues([headers]);
+  range.setFontWeight("bold");
+}
+
+function addOutputToSheet(output, sheet) {
+  var startRow = sheet.getLastRow() + 1;
+  var range = sheet.getRange(startRow, 1, output.length, output[0].length);
+  range.setValues(output);
+}
+
+function toMoney(m) { return m * 1000000; }
+function convertMoney(m) { return m / 1000000; }
+function getTodaysDate() { return new Date(); }
